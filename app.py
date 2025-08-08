@@ -111,4 +111,4 @@ if archivo_excel:
         resultado_a.to_csv("resultado_a.csv", index=False)
         st.download_button("Descargar resultados de Archivo A", data=resultado_a.to_csv(index=False), file_name="resultado_a.csv", mime="text/csv")
 
-    if df_b is_
+    if df_b is not None:
