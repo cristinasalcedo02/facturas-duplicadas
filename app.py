@@ -1,114 +1,121 @@
 import streamlit as st
 import pandas as pd
-import hashlib
-from datetime import datetime
 import plotly.express as px
+from datetime import datetime
+import hashlib
 
-# ---------------------------
+# ----------------------------
 # CONFIGURACIÓN DE LA APP
-# ---------------------------
-st.set_page_config(page_title="CAAT - Detección de Duplicados", layout="wide")
-st.title("🧾 CAAT - Detección de Facturas Duplicadas")
+# ----------------------------
+st.set_page_config(page_title="Auditoría de Facturas", layout="wide")
+st.title("🔎 Aplicación Interactiva para Auditoría de Facturas Duplicadas")
 
-# ---------------------------
-# INTRODUCCIÓN Y GUÍA
-# ---------------------------
+# ----------------------------
+# INTRODUCCIÓN CON GUÍA
+# ----------------------------
 st.markdown("""
-Esta herramienta de auditoría permite detectar facturas sospechosas de duplicación dentro de archivos Excel cargados por el usuario.  
-✅ **Guía rápida de uso**:
-1. Sube un archivo Excel con al menos **dos hojas** que contengan tus datos contables o financieros.
-2. Selecciona qué hoja deseas analizar como “Archivo A” y cuál como “Archivo B”.
-3. La app identificará duplicados dentro de cada hoja y entre ambas.
-4. Revisa los hallazgos, exporta resultados y guarda evidencias del análisis.
+Esta aplicación permite realizar un análisis automatizado de facturas cargadas en un archivo Excel. Puedes subir un archivo con múltiples hojas, seleccionar qué hojas usar y analizar posibles duplicaciones, inconsistencias o coincidencias entre hojas.
 
-**Nota**: No se requiere una estructura específica de nombres de columnas. La app se adapta dinámicamente a los datos proporcionados.
+**¿Cómo funciona?**
+1. Sube un archivo `.xlsx` desde el panel lateral izquierdo.
+2. Selecciona las hojas que deseas analizar como “Archivo A” y (opcionalmente) “Archivo B”.
+3. La app detectará:
+   - Registros duplicados dentro de cada hoja.
+   - Coincidencias entre ambas hojas si seleccionas dos.
+   - Resumen visual e indicadores clave de auditoría.
+4. Descarga los resultados en Excel o CSV.
+
+Este análisis se reinicia con cada ejecución y **no requiere columnas fijas**, por lo que puedes usar cualquier archivo compatible para auditorías futuras.
 """)
 
-# ---------------------------
-# CARGA DEL ARCHIVO EXCEL
-# ---------------------------
-archivo_excel = st.file_uploader("📤 Sube tu archivo Excel con varias hojas", type=["xlsx"])
+# ----------------------------
+# CARGA DE ARCHIVO EXCEL
+# ----------------------------
+archivo_excel = st.file_uploader("📤 Sube el archivo Excel (.xlsx)", type=["xlsx"])
+
 if archivo_excel:
     xls = pd.ExcelFile(archivo_excel)
-    hojas_disponibles = xls.sheet_names
-    hoja_a = st.selectbox("📄 Selecciona la hoja para Archivo A", hojas_disponibles)
-    hoja_b = st.selectbox("📄 Selecciona la hoja para Archivo B (opcional)", hojas_disponibles)
+    hojas = xls.sheet_names
+
+    hoja_a = st.selectbox("Selecciona la hoja para el análisis principal (Archivo A):", hojas)
+    hoja_b = st.selectbox("Selecciona una hoja opcional para análisis cruzado (Archivo B):", ["(Ninguna)"] + hojas)
 
     df_a = pd.read_excel(xls, sheet_name=hoja_a)
-    df_b = pd.read_excel(xls, sheet_name=hoja_b) if hoja_b else None
 
-    # ---------------------------
-    # VALIDACIONES Y HASH
-    # ---------------------------
-    def calcular_hash(df):
-        return hashlib.sha256(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
+    if hoja_b != "(Ninguna)":
+        df_b = pd.read_excel(xls, sheet_name=hoja_b)
+    else:
+        df_b = None
 
-    hash_a = calcular_hash(df_a)
-    hash_b = calcular_hash(df_b) if df_b is not None else ""
+    # ----------------------------
+    # HASH DE INTEGRIDAD
+    # ----------------------------
+    archivo_hash = hashlib.sha256(archivo_excel.getvalue()).hexdigest()
 
-    # ---------------------------
-    # DETECCIÓN DE DUPLICADOS
-    # ---------------------------
+    # ----------------------------
+    # VALIDACIÓN BÁSICA Y ANÁLISIS
+    # ----------------------------
+    st.markdown("## 🧪 Resultados del Análisis")
+
     def detectar_duplicados(df):
-        df_temp = df.copy()
-        duplicados = {}
-        for col in df.columns:
-            duplicados[f"duplicado_{col}"] = df.duplicated(subset=[col], keep=False)
-        duplicados_df = pd.concat([df_temp, pd.DataFrame(duplicados)], axis=1)
-        return duplicados_df
+        df = df.copy()
+        df["duplicado_general"] = df.duplicated(keep=False)
+        return df[df["duplicado_general"]], df
 
-    resultado_a = detectar_duplicados(df_a)
-    resultado_b = detectar_duplicados(df_b) if df_b is not None else None
+    duplicados_a, df_a = detectar_duplicados(df_a)
 
-    # ---------------------------
-    # ANÁLISIS CRUZADO
-    # ---------------------------
-    coincidencias = pd.DataFrame()
+    st.markdown(f"### 📄 Resultados - Hoja: `{hoja_a}`")
+    st.write(f"🔍 Se detectaron **{len(duplicados_a)}** registros duplicados.")
+    if not duplicados_a.empty:
+        st.dataframe(duplicados_a)
+
+        csv_dup = duplicados_a.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Descargar duplicados", csv_dup, "duplicados_archivo_a.csv", "text/csv")
+
+    # Ranking de usuarios (si existe columna 'usuario' o similar)
+    posibles_usuarios = [col for col in df_a.columns if "usuario" in col.lower()]
+    if posibles_usuarios:
+        columna_usuario = posibles_usuarios[0]
+        ranking = duplicados_a[columna_usuario].value_counts().reset_index()
+        ranking.columns = ["Usuario", "Cantidad de duplicados"]
+        st.markdown("#### 👥 Ranking de usuarios con más duplicados:")
+        st.dataframe(ranking)
+
+    # Visualización (opcional)
+    if not duplicados_a.empty:
+        fig = px.histogram(duplicados_a, x=duplicados_a.columns[0], title="Distribución de Duplicados")
+        st.plotly_chart(fig)
+
+    # ----------------------------
+    # ANÁLISIS CRUZADO (OPCIONAL)
+    # ----------------------------
     if df_b is not None:
-        columnas_comunes = list(set(df_a.columns).intersection(set(df_b.columns)))
-        if columnas_comunes:
-            coincidencias = pd.merge(df_a, df_b, on=columnas_comunes, how="inner")
+        st.markdown("### 🔄 Análisis cruzado entre hojas")
 
-    # ---------------------------
-    # RESUMEN Y RESULTADOS
-    # ---------------------------
-    st.subheader("📊 Resumen del Análisis")
-    resumen = {
-        "Total de registros en Archivo A": len(df_a),
-        "Total de duplicados en A (por columnas)": sum(resultado_a.filter(like="duplicado_").any(axis=1)),
-        "Hash de integridad A": hash_a,
+        claves_comunes = list(set(df_a.columns) & set(df_b.columns))
+        if claves_comunes:
+            clave = st.selectbox("Selecciona la clave común para comparar:", claves_comunes)
+            duplicados_cruzados = pd.merge(df_a, df_b, on=clave, how='inner')
+
+            st.write(f"🔗 Se encontraron **{len(duplicados_cruzados)}** coincidencias entre ambas hojas.")
+            st.dataframe(duplicados_cruzados)
+
+            csv_cruzado = duplicados_cruzados.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Descargar coincidencias cruzadas", csv_cruzado, "coincidencias_cruzadas.csv", "text/csv")
+        else:
+            st.warning("⚠️ No se encontraron campos comunes entre las hojas para análisis cruzado.")
+
+    # ----------------------------
+    # LOG DE AUDITORÍA (REINICIABLE)
+    # ----------------------------
+    log_data = {
+        "usuario": "auditor_app",
+        "archivo_subido": archivo_excel.name,
+        "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "duplicados_archivo_a": len(duplicados_a),
+        "coincidencias_cruzadas": len(duplicados_cruzados) if df_b is not None and claves_comunes else 0,
+        "hash_integridad": archivo_hash
     }
 
-    if df_b is not None:
-        resumen["Total de registros en Archivo B"] = len(df_b)
-        resumen["Total de duplicados en B (por columnas)"] = sum(resultado_b.filter(like="duplicado_").any(axis=1))
-        resumen["Hash de integridad B"] = hash_b
-        resumen["Coincidencias exactas entre A y B"] = len(coincidencias)
-
-    for clave, valor in resumen.items():
-        st.markdown(f"- **{clave}**: {valor}")
-
-    # ---------------------------
-    # GRÁFICO DE DUPLICADOS
-    # ---------------------------
-    st.subheader("📈 Visualización de duplicados")
-    grafico_data = pd.DataFrame({
-        "Categoría": ["Duplicados A", "Duplicados B", "Coincidencias entre A y B"],
-        "Cantidad": [
-            resumen.get("Total de duplicados en A (por columnas)", 0),
-            resumen.get("Total de duplicados en B (por columnas)", 0),
-            resumen.get("Coincidencias exactas entre A y B", 0)
-        ]
-    })
-    fig = px.bar(grafico_data, x="Categoría", y="Cantidad", text="Cantidad", color="Categoría")
-    st.plotly_chart(fig)
-
-    # ---------------------------
-    # DESCARGA DE RESULTADOS
-    # ---------------------------
-    st.subheader("📥 Exportar resultados")
-    if not resultado_a.empty:
-        resultado_a.to_csv("resultado_a.csv", index=False)
-        st.download_button("Descargar resultados de Archivo A", data=resultado_a.to_csv(index=False), file_name="resultado_a.csv", mime="text/csv")
-
-    if df_b is not None:
+    st.markdown("### 📋 Log de Auditoría")
+    st.json(log_data)
