@@ -1,113 +1,97 @@
-import streamlit as st
-import pandas as pd
-import hashlib
-import matplotlib.pyplot as plt
 from datetime import datetime
+import pandas as pd
+import streamlit as st
+import matplotlib.pyplot as plt
+import hashlib
 
 # ----------------------------
 # CONFIGURACIÓN DE LA APP
 # ----------------------------
-st.set_page_config(page_title="CAAT - Auditoría de Facturas", layout="wide")
-st.title("🧾 CAAT - Auditoría de Facturas Duplicadas")
+st.set_page_config(page_title="CAAT - Análisis de Facturas", layout="wide")
+st.title("📊 CAAT - Herramienta de Auditoría de Facturas")
+
 st.markdown("""
-Esta herramienta permite identificar facturas sospechosas de duplicación mediante análisis interno o cruzado. 
-Puedes cargar un archivo Excel con múltiples hojas. Selecciona el tipo de análisis que deseas ejecutar.
+Esta herramienta de auditoría asistida por computadora (CAAT) permite analizar un archivo Excel con múltiples hojas para detectar posibles inconsistencias o duplicaciones en registros contables.
+
+**Guía rápida de uso:**
+1. 📂 Sube un archivo `.xlsx` que contenga tus datos en varias hojas.
+2. ✅ Selecciona las hojas que desees analizar o comparar.
+3. 🔎 La app detectará duplicados automáticamente.
+4. 📊 Visualiza gráficos y resultados en tiempo real.
+5. 📥 Exporta o documenta los hallazgos con integridad verificada.
+
+Esta aplicación **es flexible**: no requiere campos predefinidos, lo que permite adaptarse a diferentes estructuras de datos.
 """)
 
 # ----------------------------
-# SUBIDA DE ARCHIVO
+# CARGA DEL ARCHIVO
 # ----------------------------
-archivo_excel = st.file_uploader("📤 Sube tu archivo Excel (.xlsx)", type=["xlsx"])
+archivo = st.file_uploader("Sube el archivo Excel con múltiples hojas", type=["xlsx"])
 
-if archivo_excel:
-    xls = pd.ExcelFile(archivo_excel)
+if archivo:
+    xls = pd.ExcelFile(archivo)
     hojas = xls.sheet_names
+    hoja_a = st.selectbox("Selecciona la hoja para análisis A:", hojas, key="hoja_a")
+    hoja_b = st.selectbox("Selecciona la hoja para análisis B (opcional):", hojas, key="hoja_b")
 
-    modo_analisis = st.radio("Selecciona el tipo de análisis:", ["📄 Hoja única", "🔀 Análisis cruzado entre hojas"])
+    df_a = pd.read_excel(xls, sheet_name=hoja_a)
+    df_b = pd.read_excel(xls, sheet_name=hoja_b) if hoja_b != hoja_a else None
 
-    if modo_analisis == "📄 Hoja única":
-        hoja = st.selectbox("Selecciona la hoja para analizar:", hojas)
-        df = pd.read_excel(archivo_excel, sheet_name=hoja)
+    st.markdown("### 📄 Vista previa del archivo A")
+    st.dataframe(df_a.head())
 
-        columnas = df.columns.tolist()
-        st.markdown("---")
-        st.subheader("🔎 Selecciona las columnas para la prueba de duplicación")
+    if df_b is not None:
+        st.markdown("### 📄 Vista previa del archivo B")
+        st.dataframe(df_b.head())
 
-        col1 = st.selectbox("Columna 1", columnas)
-        col2 = st.selectbox("Columna 2", columnas)
-        col3 = st.selectbox("Columna 3", columnas)
+    # Detección de duplicados automáticos
+    duplicados_a = df_a[df_a.duplicated(keep=False)]
+    duplicados_b = df_b[df_b.duplicated(keep=False)] if df_b is not None else pd.DataFrame()
 
-        df["duplicado"] = df.duplicated(subset=[col1, col2, col3], keep=False)
+    st.markdown("### 🔍 Registros duplicados en el archivo A")
+    st.dataframe(duplicados_a)
 
-        sospechosas = df[df["duplicado"]]
-        resumen = {
-            "Total registros": len(df),
-            "Duplicados detectados": sospechosas.shape[0],
-            "Fecha análisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+    if not duplicados_b.empty:
+        st.markdown("### 🔍 Registros duplicados en el archivo B")
+        st.dataframe(duplicados_b)
 
-    else:
-        hoja1 = st.selectbox("Selecciona la hoja A:", hojas, key="a")
-        hoja2 = st.selectbox("Selecciona la hoja B:", hojas, key="b")
+    # RESUMEN GRÁFICO
+    resumen = {
+        "Registros totales A": len(df_a),
+        "Duplicados A": len(duplicados_a),
+    }
+    if df_b is not None:
+        resumen["Registros totales B"] = len(df_b)
+        resumen["Duplicados B"] = len(duplicados_b)
 
-        df1 = pd.read_excel(archivo_excel, sheet_name=hoja1)
-        df2 = pd.read_excel(archivo_excel, sheet_name=hoja2)
-
-        columnas1 = df1.columns.tolist()
-        columnas2 = df2.columns.tolist()
-
-        st.markdown("---")
-        st.subheader("🔗 Selecciona columnas clave para comparar entre hojas")
-
-        col1_a = st.selectbox("Hoja A - Columna 1", columnas1)
-        col2_a = st.selectbox("Hoja A - Columna 2", columnas1)
-        col3_a = st.selectbox("Hoja A - Columna 3", columnas1)
-
-        col1_b = st.selectbox("Hoja B - Columna 1", columnas2)
-        col2_b = st.selectbox("Hoja B - Columna 2", columnas2)
-        col3_b = st.selectbox("Hoja B - Columna 3", columnas2)
-
-        df1["clave"] = df1[col1_a].astype(str) + df1[col2_a].astype(str) + df1[col3_a].astype(str)
-        df2["clave"] = df2[col1_b].astype(str) + df2[col2_b].astype(str) + df2[col3_b].astype(str)
-
-        df1["hash"] = df1["clave"].apply(lambda x: hashlib.sha256(x.encode()).hexdigest())
-        df2["hash"] = df2["clave"].apply(lambda x: hashlib.sha256(x.encode()).hexdigest())
-
-        duplicados = pd.merge(df1, df2, on="hash", suffixes=("_a", "_b"))
-
-        resumen = {
-            "Registros en Hoja A": len(df1),
-            "Registros en Hoja B": len(df2),
-            "Coincidencias encontradas": len(duplicados),
-            "Fecha análisis": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-
-    # ----------------------------
-    # MOSTRAR RESULTADOS
-    # ----------------------------
-    st.markdown("---")
-    st.subheader("📊 Resumen del análisis")
-    for k, v in resumen.items():
-        st.markdown(f"- **{k}**: {v}")
-
-    if modo_analisis == "📄 Hoja única":
-        st.subheader("📋 Facturas sospechosas dentro de la hoja")
-        st.dataframe(sospechosas)
-    else:
-        st.subheader("📋 Coincidencias entre hojas")
-        st.dataframe(duplicados)
-
-    # ----------------------------
-    # GRÁFICO
-    # ----------------------------
-    st.subheader("📈 Visualización de resultados")
+    st.markdown("### 📊 Gráfico resumen")
     fig, ax = plt.subplots()
-    ax.bar(resumen.keys(), [v for v in resumen.values() if isinstance(v, int)])
-    ax.set_xticklabels(resumen.keys(), rotation=45, ha='right')
+    ax.bar(resumen.keys(), resumen.values(), color='cornflowerblue')
+    ax.set_ylabel("Cantidad")
+    ax.set_title("Resumen del análisis")
+    ax.set_xticklabels(resumen.keys(), rotation=15, ha='right')
     st.pyplot(fig)
 
-    # ----------------------------
-    # LOG (se reinicia cada vez)
-    # ----------------------------
-    log = pd.DataFrame([resumen])
-    log.to_csv("log_ejecucion.csv", index=False)
+    # SHA256
+    archivo.seek(0)
+    sha256 = hashlib.sha256(archivo.read()).hexdigest()
+    st.markdown(f"🛡️ **Hash SHA-256 del archivo:** `{sha256}`")
+
+    # LOG (reiniciado en cada ejecución)
+    hora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log = pd.DataFrame([{
+        "fecha": hora,
+        "archivo": archivo.name,
+        "hoja_a": hoja_a,
+        "hoja_b": hoja_b,
+        "registros_a": len(df_a),
+        "duplicados_a": len(duplicados_a),
+        "registros_b": len(df_b) if df_b is not None else "",
+        "duplicados_b": len(duplicados_b) if not duplicados_b.empty else "",
+        "hash": sha256
+    }])
+    st.markdown("### 📋 Log de auditoría de esta ejecución")
+    st.dataframe(log)
+
+else:
+    st.info("🔺 Por favor, sube un archivo Excel para comenzar.")
